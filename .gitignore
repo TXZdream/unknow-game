@@ -136,3 +136,19 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+.venv
+venv/
+__pycache__
+# Ignore dynaconf secret files
+.secrets.*
+
+settings.local.yaml
+settings.ingest.local.yaml
+build/
+dist/
+my-layer-code/
+fc-layer.zip
+data/
+
+.DS_Store

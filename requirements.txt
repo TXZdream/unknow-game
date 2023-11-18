@@ -1,0 +1,4 @@
+sqlitedict==2.1.0
+langchain==0.0.330
+dynaconf==3.2.2
+openai==0.28.0
