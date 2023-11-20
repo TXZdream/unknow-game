@@ -10,6 +10,7 @@ class UnknownModel:
     _iter_table_name = "iterator"
     _global_table_name = "global"
     _story_table_name = "story"
+    _data_log_table_name = "data_log"
 
     def __init__(self, db_path: str) -> None:
         os.makedirs(db_path, exist_ok=True)
@@ -19,6 +20,9 @@ class UnknownModel:
             f"{db_path}/{UnknownModel._db_name}", tablename=UnknownModel._iter_table_name, autocommit=True)
         self.global_data = SqliteDict(
             f"{db_path}/{UnknownModel._db_name}", tablename=UnknownModel._global_table_name, autocommit=True)
+        self.data_log = SqliteDict(
+            f"{db_path}/{UnknownModel._db_name}", tablename=UnknownModel._data_log_table_name, autocommit=True
+        )
         self.story = SqliteDict(
             f"{db_path}/{UnknownModel._db_name}", tablename=UnknownModel._story_table_name, autocommit=True)
 
@@ -50,7 +54,7 @@ class IteratorOperation(BaseModel):
     #     description="keys of related data which will is related to this iterator, date key must exist in available data list, code can only access these datas",
     # )
     code: str = Field(
-        description="code of new added iterator, each data code used must exist in available data list. Iterator is a python function with format: def run(): ..., no argument should be passed, dict of new data value should be returned",
+        description="code of new added iterator, each data code used must exist in available data list. Iterator is python code which update data, all data is in float format",
     )
     turn: int = Field(
         description="the total turns number of new added iterator will be run, -1 means run forever",
@@ -64,4 +68,18 @@ class Operation(BaseModel):
     )
     iterator_operations: List[IteratorOperation] = Field(
         description="list of iterator operations",
+    )
+
+
+class TurnEvent(BaseModel):
+    turn: int = Field(
+        description="which turn this event has happened",
+    )
+    event: str = Field(
+        description="description of event happened",
+    )
+
+class TurnEvents(BaseModel):
+    events: List[TurnEvent] = Field(
+        description="list of turn events",
     )

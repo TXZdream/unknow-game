@@ -1,4 +1,5 @@
 import logging
+import time
 from sqlitedict import SqliteDict
 from io import StringIO
 from contextlib import redirect_stdout
@@ -9,7 +10,7 @@ from langchain.callbacks.tracers import ConsoleCallbackHandler
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema, PydanticOutputParser
 from langchain.schema import BaseOutputParser, OutputParserException
 
-from unknown.model import Operation, UnknownModel
+from unknown.model import Operation, TurnEvent, TurnEvents, UnknownModel
 import json
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,10 @@ class UnknownService:
         # 执行迭代器
         for k, v in iterator_dict.items():
             print(f"------ start run iterator named {k} ------")
+            if iterator_dict[k].get('error', None):
+                print(
+                    f"------ skip iterator named {k} because of history error ------")
+                continue
             used_turn = iterator_dict[k].get('used_turn', 0)
             max_turn = iterator_dict[k].get('turn', 0)
             if max_turn != -1 and used_turn >= max_turn:
@@ -39,14 +44,16 @@ class UnknownService:
             # 准备数据和执行用的代码
             logic = v.get("logic")
             # 执行并更新结果
-            f = StringIO()
-            with redirect_stdout(f):
+            try:
                 data_ctx = {k: v.get("value", 0) for k, v in data.items()}
-                code = f"import json\n{logic}\nprint(json.dumps(run()))"
-                exec(code, data_ctx)
-            new_data = json.loads(f.getvalue())
-            for k1, v1 in new_data.items():
-                data[k1]['value'] = v1
+                # code = f"import json\n{logic}\nprint(json.dumps(run()))"
+                exec(logic, data_ctx, data_ctx)
+            except Exception as e:
+                iterator_dict[k]['error'] = str(e)
+            # new_data = json.loads(f.getvalue())
+            for k1 in data.keys():
+                if k1 in data_ctx:
+                    data[k1]['value'] = data_ctx[k1]
             # 更新迭代器次数
             iterator_dict[k]['used_turn'] = used_turn + 1
             print(f"------  end run iterator named {k}  ------")
@@ -55,8 +62,14 @@ class UnknownService:
             self.db.data[k] = v
         for k, v in iterator_dict.items():
             self.db.iterator[k] = v
+            if v.get('error', None):
+                del self.db.iterator[k]
         self.db.global_data['turn'] = self.db.global_data.get(
             'turn', 0) + 1
+
+        # 记录日志
+        self.db.data_log[self.incr()] = {
+            'data': data, 'iterator': iterator_dict, 'turn': self.db.global_data['turn']}
 
     def prepare_update_agent(self, parser: BaseOutputParser):
         prompt = ChatPromptTemplate.from_template(
@@ -108,7 +121,7 @@ class UnknownService:
                     'unit': data_op.unit,
                 }
             elif data_op.operation == 'remove':
-                self.db.data.pop(data_op.data_name, None)
+                del self.db.data[data_op.data_name]
 
         print(f"Start iterator operation")
         for iter_op in result.iterator_operations:
@@ -122,9 +135,16 @@ class UnknownService:
                     # 'related_data_key': iter_op.related_data_key,
                 }
             elif iter_op.operation == 'remove':
-                self.db.iterator.pop(iter_op.iterator_name, None)
+                del self.db.iterator[iter_op.iterator_name]
         print(
             f"==== Finish applying the unknown with sentence {word} ====")
+
+        turn = self.db.global_data.get('turn', 0)
+        self.db.story[self.incr()] = {
+            'data': word, 'turn': turn, 'manual': 1}
+        # 记录日志
+        self.db.data_log[self.incr()] = {
+            'data': {k: v for k, v in self.db.data.items()}, 'iterator': {k: v for k, v in self.db.iterator.items()}, 'turn': turn}
 
     def show(self):
         global_data = f"Global data:\n    - Turn: {self.db.global_data.get('turn', 0)}"
@@ -135,18 +155,28 @@ class UnknownService:
 
         print(global_data, "\n", data, "\n", iterator, "\n")
 
-    def prepare_describe_agent(self):
+    def get_describe_parser(self):
+        parser = PydanticOutputParser(pydantic_object=TurnEvents)
+        return parser
+
+    def prepare_describe_agent(self, parser: BaseOutputParser):
         prompt = ChatPromptTemplate.from_template(
             UnknownPrompt.describe_game_prompt
         )
         data = "\n".join(
-            [f"{k}, value is {v.get('value')}, description: {v.get('desc')}" for k, v in self.db.data.items()])
+            [f"{k}, value is {v.get('value')}{v.get('unit', '')}, description: {v.get('desc')}" for k, v in self.db.data.items()])
         iterator = "\n".join(
             [f"{k}: {v.get('desc')}" for k, v in self.db.iterator.items()])
+        past_events = "\n".join(
+            [f"turn {v.get('turn', 0)}: {v.get('data', '')}" for k, v in self.db.story.items()])
+
         prompt = prompt.partial(
             data=data,
             iterator=iterator,
             language="Chinese",
+            past_events=past_events,
+            turn=self.db.global_data.get('turn', 0),
+            format_instructions=parser.get_format_instructions(),
         )
         agent = (
             {}
@@ -160,11 +190,22 @@ class UnknownService:
             }
         )
 
+    def incr(self):
+        incr_id = self.db.global_data.get('incr_id', 0)
+        self.db.global_data['incr_id'] = incr_id + 1
+
+        return incr_id
+
     def describe(self) -> str:
-        agent = self.prepare_describe_agent()
+        parser = self.get_describe_parser()
+        agent = self.prepare_describe_agent(parser)
         result = agent.invoke({})
-        result = result.content
-        self.db.story[self.db.global_data['turn', 0]] = result
+        result = parser.parse(result.content)
+
+        for data in result.events:
+            self.db.story[self.incr()] = {
+                'data': data.event, 'turn': data.turn}
 
         for k, v in self.db.story.items():
-            print(f'- Turn {k}: {v}')
+            print(
+                f"- Turn {v.get('turn', 0)}({'手动事件' if v.get('manual', 0) else 'AI事件'}): {v.get('data', '')}")
