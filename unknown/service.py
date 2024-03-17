@@ -12,6 +12,8 @@ from langchain.schema import BaseOutputParser, OutputParserException
 
 from unknown.model import Operation, TurnEvent, TurnEvents, UnknownModel
 import json
+import re
+import json5
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,7 @@ class UnknownService:
                 "input": lambda x: x["input"],
             }
             | prompt
-            | llm_client.gpt_4_128k
+            | llm_client.qwen_turbo
         )
         return agent.with_config(
             {
@@ -106,7 +108,11 @@ class UnknownService:
         parser = self.get_update_output_parser()
         agent = self.prepare_update_agent(parser)
         result = agent.invoke({"input": word})
-        result = parser.parse(result.content)
+        matches = re.findall(r"```json\n(.*?)\n```", result, re.DOTALL)
+        if matches:
+            result = matches[0]
+        result = json.dumps(json5.loads(result))
+        result = parser.parse(result)
         # 写入数据
         print(
             f"==== Start applying the unknown with sentence {word} ====")
@@ -181,7 +187,7 @@ class UnknownService:
         agent = (
             {}
             | prompt
-            | llm_client.gpt_4_128k
+            | llm_client.qwen_turbo
         )
         return agent.with_config(
             {

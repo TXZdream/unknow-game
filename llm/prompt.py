@@ -16,6 +16,7 @@ Current available iterator is:
 {iterator}
 -----
 
+You MUST follow the given format instructions, and don't add anything instead of the given format instructions:
 {format_instructions}
 
 You MUST try your best to generate content with given format instructions, no matter how impossible the content is. JSON blob must be valid and can be parsed by `json.loads`.
